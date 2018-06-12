@@ -79,7 +79,12 @@ anaconda-mode/
 *.dll
 *.so
 *.dylib
-vendor/
+
+!vendor/
+vendor/*
+!vendor/github.com
+vendor/github.com/*
+!vendor/github.com/couchbase
 
 # Test binary, build with 'go test -c'
 *.test
