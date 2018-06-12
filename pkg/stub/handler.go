@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	couchbase "github.com/couchbase/gocbmgr"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func NewHandler() sdk.Handler {
@@ -37,21 +38,39 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 			logrus.Errorf("failed to get deployment: %v", err)
 			return err
 		}
+
+		containerIsReady := pod.Status.ContainerStatuses[0].Ready
+
+		if !containerIsReady {
+			logrus.Infof("Not ready to initialize")
+			return nil
+		}
+
 		podIp := pod.Status.PodIP
 		logrus.Infof("Couchbase PodIp: %s", podIp)
 
 
-		poolDefaults := couchbase.PoolsDefaults{"default", 200,200,200,200,200}
 
-		couchbaseClient := couchbase.New("some", "pass")
+		couchbaseClient := couchbase.New("admin", "password")
 		couchbaseClient.SetEndpoints([]string{"http://" + podIp + ":8091"})
-		err = couchbaseClient.ClusterInitialize("some", "pass", &poolDefaults, 8091, []couchbase.ServiceName{couchbase.DataService}, couchbase.IndexStorageNone )
+
+
+		_, err = couchbaseClient.ClusterInfo()
 		if err != nil {
-			logrus.Errorf("failed to initialize cluster: %v", err)
-			return err
+
+			err := initalizeCluster(couchbaseClient)
+			if err != nil {
+				logrus.Errorf("failed to initialize cluster: %v", err)
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func initalizeCluster(couchbaseClient *couchbase.Couchbase) error {
+	poolDefaults := couchbase.PoolsDefaults{ClusterName: "default", IndexMemoryQuota: 256, DataMemoryQuota: 256, SearchMemoryQuota: 256}
+	return couchbaseClient.ClusterInitialize("admin", "password", &poolDefaults, 8091, []couchbase.ServiceName{couchbase.DataService}, "" )
 }
 
 // newbusyBoxPod demonstrates how to create a busybox pod
@@ -79,6 +98,15 @@ func newCouchbasePod(cr *v1alpha1.Couchbase) *corev1.Pod {
 				{
 					Name:    "couchbase",
 					Image:   cr.Spec.Image,
+					ReadinessProbe: &corev1.Probe{
+						InitialDelaySeconds: 20,
+						Handler: corev1.Handler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Scheme: "HTTP",
+								Port:   intstr.FromInt(8091),
+							},
+						},
+					},
 				},
 			},
 		},
