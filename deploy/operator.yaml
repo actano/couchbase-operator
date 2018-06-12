@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: couchbase-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: couchbase-operator
+  template:
+    metadata:
+      labels:
+        name: couchbase-operator
+    spec:
+      containers:
+        - name: couchbase-operator
+          image: couchbase-operator
+          command:
+          - couchbase-operator
+          imagePullPolicy: Always
+          env:
+            - name: WATCH_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

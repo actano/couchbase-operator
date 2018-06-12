@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	couchbase "github.com/couchbase/gocbmgr"
 )
 
 func NewHandler() sdk.Handler {
@@ -24,9 +25,29 @@ type Handler struct {
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	switch o := event.Object.(type) {
 	case *v1alpha1.Couchbase:
-		err := sdk.Create(newCouchbasePod(o))
+		pod := newCouchbasePod(o)
+		err := sdk.Create(pod)
 		if err != nil && !errors.IsAlreadyExists(err) {
 			logrus.Errorf("Failed to create couchbase pod : %v", err)
+			return err
+		}
+		// Ensure the deployment size is the same as the spec
+		err = sdk.Get(pod)
+		if err != nil {
+			logrus.Errorf("failed to get deployment: %v", err)
+			return err
+		}
+		podIp := pod.Status.PodIP
+		logrus.Infof("Couchbase PodIp: %s", podIp)
+
+
+		poolDefaults := couchbase.PoolsDefaults{"default", 200,200,200,200,200}
+
+		couchbaseClient := couchbase.New("some", "pass")
+		couchbaseClient.SetEndpoints([]string{"http://" + podIp + ":8091"})
+		err = couchbaseClient.ClusterInitialize("some", "pass", &poolDefaults, 8091, []couchbase.ServiceName{couchbase.DataService}, couchbase.IndexStorageNone )
+		if err != nil {
+			logrus.Errorf("failed to initialize cluster: %v", err)
 			return err
 		}
 	}
