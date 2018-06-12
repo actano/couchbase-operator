@@ -1,0 +1,8 @@
+apiVersion: "operators.actano.com/v1alpha1"
+kind: "Couchbase"
+metadata:
+  name: "actano"
+spec:
+  size: 1
+  image: "couchbase/server:community"
+

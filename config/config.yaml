@@ -1,0 +1,3 @@
+apiVersion: operators.actano.com/v1alpha1
+kind: Couchbase
+projectName: couchbase-operator
