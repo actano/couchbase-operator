@@ -3,6 +3,6 @@ kind: "Couchbase"
 metadata:
   name: "actano"
 spec:
-  size: 1
+  size: 2
   image: "couchbase/server:community"
 

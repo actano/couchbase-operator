@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	couchbase "github.com/couchbase/gocbmgr"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"fmt"
 )
 
 func NewHandler() sdk.Handler {
@@ -33,17 +34,29 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 			return err
 		}
 
-		pod001, err := createPod(o, "001")
-		if err != nil {
-			switch err.(type) {
-			case *podNotReadyError:
-				return nil
-			default:
-				logrus.Errorf("failed to create pod: %v", err)
-				return err
+		size := o.Spec.Size
+
+		var pods []*corev1.Pod
+
+		for i := int32(1); i <= size; i++ {
+			pod, err := createPod(o, fmt.Sprintf("%03d", i))
+			if err != nil {
+				switch err.(type) {
+				case *podNotReadyError:
+					continue
+				default:
+					logrus.Errorf("failed to create pod: %v", err)
+					return err
+				}
 			}
+			pods = append(pods, pod)
 		}
-		podIp := pod001.Status.PodIP
+
+		if int32(len(pods)) != size {
+			return nil
+		}
+
+		podIp := pods[0].Status.PodIP
 		couchbaseClient := couchbase.New("admin", "password")
 		couchbaseClient.SetEndpoints([]string{"http://" + podIp + ":8091"})
 
@@ -52,7 +65,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 		if err != nil {
 
 			// initialize node...
-			hostname := "couchbase001.couchbase." + o.Namespace + ".svc"
+			hostname := pods[0].Spec.Hostname + ".couchbase." + o.Namespace + ".svc"
 			datapath := "/opt/couchbase/var/lib/couchbase/data"
 			err = couchbaseClient.NodeInitialize(hostname, datapath, datapath, []string{})
 			if err != nil {
@@ -97,7 +110,7 @@ func createPod(cr *v1alpha1.Couchbase, id string) (*corev1.Pod, error) {
 		return nil, err
 	}
 
-	containerIsReady := pod.Status.ContainerStatuses[0].Ready
+	containerIsReady := len(pod.Status.ContainerStatuses) != 0 && pod.Status.ContainerStatuses[0].Ready
 
 	if !containerIsReady {
 		return nil, newPodNotReadyError("Pod " + id + " not ready")
