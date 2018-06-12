@@ -14,6 +14,7 @@ import (
 	couchbase "github.com/couchbase/gocbmgr"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"fmt"
+	"strings"
 )
 
 func NewHandler() sdk.Handler {
@@ -61,7 +62,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 		couchbaseClient.SetEndpoints([]string{"http://" + podIp + ":8091"})
 
 
-		_, err = couchbaseClient.ClusterInfo()
+		clusterInfo, err := couchbaseClient.ClusterInfo()
 		if err != nil {
 
 			// initialize node...
@@ -79,8 +80,48 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 				return err
 			}
 			logrus.Info("Initialized Cluster")
+			return nil
+		}
+		nodes := clusterInfo.Nodes
+
+		allNodesInCluster := true
+		for _, pod := range pods {
+			hostname := pod.Spec.Hostname
+			isInCluster := false
+			for _, node := range nodes {
+				nodeHostename := node.HostName
+				if strings.Contains(nodeHostename, hostname) {
+					isInCluster = true
+					break
+				}
+			}
+			if !isInCluster {
+				allNodesInCluster = false
+				err := joinCluster(couchbaseClient, pod)
+				if err != nil {
+					logrus.Errorf("Error Joining the cluster: %v", err)
+					continue
+				}
+				logrus.Infof("Successfully added node: %v", hostname)
+			}
+		}
+
+		if allNodesInCluster {
+			progress, err := couchbaseClient.Rebalance([]string{})
+			if err != nil {
+				logrus.Errorf("Error Rebalancing Cluster: %v", err)
+				return err
+			}
+
+			err = progress.Wait()
+			if err != nil {
+				logrus.Errorf("Error Waiting for Rebalancing Cluster: %v", err)
+				return err
+			}
+			logrus.Infof("Successfully rebalanced the cluster")
 		}
 	}
+
 	return nil
 }
 
@@ -122,6 +163,11 @@ func createPod(cr *v1alpha1.Couchbase, id string) (*corev1.Pod, error) {
 func initalizeCluster(couchbaseClient *couchbase.Couchbase) error {
 	poolDefaults := couchbase.PoolsDefaults{ClusterName: "default", IndexMemoryQuota: 256, DataMemoryQuota: 256, SearchMemoryQuota: 256}
 	return couchbaseClient.ClusterInitialize("admin", "password", &poolDefaults, 8091, []couchbase.ServiceName{couchbase.DataService}, "" )
+}
+
+func joinCluster(couchbaseClient *couchbase.Couchbase, pod *corev1.Pod) error {
+	hostname := pod.Spec.Hostname + ".couchbase." + pod.Namespace + ".svc"
+	return couchbaseClient.AddNode(hostname, "admin", "password",[]couchbase.ServiceName{couchbase.DataService})
 }
 
 func newCouchbaseService(cr *v1alpha1.Couchbase) *corev1.Service {
