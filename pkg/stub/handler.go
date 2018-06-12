@@ -33,30 +33,17 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 			return err
 		}
 
-		pod := newCouchbasePod(o, "001")
-		err = sdk.Create(pod)
-		if err != nil && !errors.IsAlreadyExists(err) {
-			logrus.Errorf("Failed to create couchbase pod : %v", err)
-			return err
-		}
-		// Ensure the deployment size is the same as the spec
-		err = sdk.Get(pod)
+		pod001, err := createPod(o, "001")
 		if err != nil {
-			logrus.Errorf("failed to get deployment: %v", err)
-			return err
+			switch err.(type) {
+			case *podNotReadyError:
+				return nil
+			default:
+				logrus.Errorf("failed to create pod: %v", err)
+				return err
+			}
 		}
-
-		containerIsReady := pod.Status.ContainerStatuses[0].Ready
-
-		if !containerIsReady {
-			logrus.Infof("Not ready to initialize")
-			return nil
-		}
-
-		podIp := pod.Status.PodIP
-		logrus.Infof("Couchbase PodIp: %s", podIp)
-
-
+		podIp := pod001.Status.PodIP
 		couchbaseClient := couchbase.New("admin", "password")
 		couchbaseClient.SetEndpoints([]string{"http://" + podIp + ":8091"})
 
@@ -78,9 +65,45 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 				logrus.Errorf("failed to initialize cluster: %v", err)
 				return err
 			}
+			logrus.Info("Initialized Cluster")
 		}
 	}
 	return nil
+}
+
+type podNotReadyError struct {
+	message    string
+}
+
+func newPodNotReadyError(message string) *podNotReadyError {
+	return &podNotReadyError{message: message}
+}
+
+func (e *podNotReadyError) Error() string {
+	return e.message
+}
+
+func createPod(cr *v1alpha1.Couchbase, id string) (*corev1.Pod, error) {
+	pod := newCouchbasePod(cr, id)
+	err := sdk.Create(pod)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		logrus.Errorf("Failed to create couchbase pod : %v", err)
+		return nil, err
+	}
+	// Ensure the deployment size is the same as the spec
+	err = sdk.Get(pod)
+	if err != nil {
+		logrus.Errorf("failed to get deployment: %v", err)
+		return nil, err
+	}
+
+	containerIsReady := pod.Status.ContainerStatuses[0].Ready
+
+	if !containerIsReady {
+		return nil, newPodNotReadyError("Pod " + id + " not ready")
+	}
+
+	return pod, nil
 }
 
 func initalizeCluster(couchbaseClient *couchbase.Couchbase) error {
