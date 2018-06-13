@@ -66,7 +66,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 		if err != nil {
 
 			// initialize node...
-			hostname := pods[0].Spec.Hostname + ".couchbase." + o.Namespace + ".svc"
+			hostname := podDNSName(*pods[0])
 			datapath := "/opt/couchbase/var/lib/couchbase/data"
 			err = couchbaseClient.NodeInitialize(hostname, datapath, datapath, []string{})
 			if err != nil {
@@ -86,7 +86,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 
 		allNodesInCluster := true
 		for _, pod := range pods {
-			hostname := pod.Spec.Hostname
+			hostname := podDNSName(*pod)
 			isInCluster := false
 			for _, node := range nodes {
 				nodeHostename := node.HostName
@@ -166,7 +166,7 @@ func initalizeCluster(couchbaseClient *couchbase.Couchbase) error {
 }
 
 func joinCluster(couchbaseClient *couchbase.Couchbase, pod *corev1.Pod) error {
-	hostname := pod.Spec.Hostname + ".couchbase." + pod.Namespace + ".svc"
+	hostname := podDNSName(*pod)
 	return couchbaseClient.AddNode(hostname, "admin", "password",[]couchbase.ServiceName{couchbase.DataService})
 }
 
@@ -215,8 +215,6 @@ func newCouchbasePod(cr *v1alpha1.Couchbase, id string) *corev1.Pod {
 			Labels: labels,
 		},
 		Spec: corev1.PodSpec{
-			Hostname: "couchbase" + id,
-			Subdomain: "couchbase",
 			Containers: []corev1.Container{
 				{
 					Name:    "couchbase",
@@ -240,4 +238,10 @@ func newCouchbasePod(cr *v1alpha1.Couchbase, id string) *corev1.Pod {
 // belonging to the given memcached CR name.
 func labelsForCouchbase(name string) map[string]string {
 	return map[string]string{"app": "couchbase", "couchbase_cr": name}
+}
+
+// podDNSName constructs the dns name on which a pod can be addressed
+func podDNSName(p corev1.Pod) string {
+	podIP := strings.Replace(p.Status.PodIP, ".", "-", -1)
+	return fmt.Sprintf("%s.%s.pod", podIP, p.Namespace)
 }
